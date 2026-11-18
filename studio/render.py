@@ -79,7 +79,11 @@ def install_fonts():
 
 
 LAYOUTS = {"blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fill", "crop": "Fill the screen (centre crop)",
-           "gameplay": "Gameplay fills the screen, facecam in the corner"}
+           "gameplay": "Gameplay with a full-width facecam above",
+           "zoom_facecam": "Zoomed in with a full-width facecam above",
+           "full_facecam": "Full frame with blurred fill and a full-width facecam above"}
+BLURRED_FACECAM_LAYOUTS = {"zoom_facecam", "full_facecam"}
+FACECAM_LAYOUTS = {"gameplay"} | BLURRED_FACECAM_LAYOUTS
 
 
 def _ts(t):
@@ -111,16 +115,16 @@ def _groups(words, per):
 
 def geometry(src_w, src_h, layout):
     """Where the video sits in the 1080x1920 frame, and where hook and captions go."""
-    if src_h >= src_w and layout != "crop":
+    if src_h >= src_w and layout not in FACECAM_LAYOUTS and layout != "crop":
         layout = "crop"  # already vertical or square: nothing to gain from a blurred fill
-    if layout == "blur":
+    if layout in ("blur", "full_facecam") and src_h < src_w:
         fg_h = min(H, int(round(W * src_h / src_w / 2)) * 2)
-    elif layout == "zoom":
+    elif layout in ("zoom", "zoom_facecam") and src_h < src_w:
         fg_h = 1000
     else:
         fg_h = H
     top = (H - fg_h) // 2
-    if layout in ("crop", "gameplay"):
+    if layout in ("crop", "gameplay") or (layout in BLURRED_FACECAM_LAYOUTS and fg_h == H):
         return layout, fg_h, 300, 1380
     return layout, fg_h, max(230, top - 190), min(1640, top + fg_h + 180)
 
@@ -228,36 +232,48 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     return head + "\n".join(ev) + "\n"
 
 
-PIP_W = 380            # how wide the facecam is in the 1080-wide frame
-PIP_MARGIN = 26
+def facecam_pixels(crop, width, height):
+    """Convert a crop saved as percentages to an even pixel rectangle in the source."""
+    x, y, w, h = crop
+    left, right = (2 * round(p * width / 200) for p in (x, x + w))
+    top, bottom = (2 * round(p * height / 200) for p in (y, y + h))
+    return [left, top, min(right, width) - left, min(bottom, height) - top]
+
+
+def _camera_height(layout, facecam):
+    if layout not in FACECAM_LAYOUTS or not facecam or len(facecam) != 4 or min(facecam[2:]) <= 8:
+        return 0
+    natural = 2 * round(W * facecam[3] / facecam[2] / 2)
+    # A tall camera crop still leaves most of the clip for the main picture.
+    return max(2, min(natural, 2 * int(H * 0.4 / 2)))
 
 
 def _filter(layout, fg_h, facecam=None):
-    if layout == "gameplay" and facecam:
-        # The game fills the screen, and the webcam sits in the top corner of it, so a viewer sees
-        # the play and the face at the same time.
+    source, output = f"[0:v]fps={config.OUT_FPS},", "[v0];"
+    camera = ""
+    camera_h = _camera_height(layout, facecam)
+    main_h = H - camera_h
+    if camera_h:
         fx, fy, fw, fh = (int(v) for v in facecam)
-        if fw > 8 and fh > 8:
-            pip_h = max(2, int(round(PIP_W * fh / fw)))
-            return (f"[0:v]fps={config.OUT_FPS},split=2[base][fc];"
-                    f"[base]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[b];"
-                    f"[fc]crop={fw}:{fh}:{fx}:{fy},scale={PIP_W}:{pip_h},setsar=1[p];"
-                    f"[b][p]overlay={W - PIP_W - PIP_MARGIN}:{PIP_MARGIN}[v0];")
-    if layout == "crop" or (layout == "gameplay" and not facecam):
-        return f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[v0];"
-    return (f"[0:v]fps={config.OUT_FPS},split=2[a][b];"
-            f"[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,"
-            f"scale={W}:{H},eq=brightness=-0.14:saturation=1.15[bg];"
+        source += "split=2[base][fc];[base]"
+        output = "[main];"
+        camera = (f"[fc]crop={fw}:{fh}:{fx}:{fy},scale={W}:{camera_h}:force_original_aspect_ratio=increase,"
+                  f"crop={W}:{camera_h},setsar=1[cam];[cam][main]vstack=inputs=2[v0];")
+    if layout in ("crop", "gameplay") or (layout in BLURRED_FACECAM_LAYOUTS and fg_h == H):
+        return f"{source}scale={W}:{main_h}:force_original_aspect_ratio=increase,crop={W}:{main_h},setsar=1{output}{camera}"
+    fg_h = min(fg_h, main_h)
+    blur_h = 2 * round(main_h * 135 / W)
+    return (f"{source}split=2[a][b];"
+            f"[a]scale=270:{blur_h}:force_original_aspect_ratio=increase,crop=270:{blur_h},boxblur=6:2,"
+            f"scale={W}:{main_h},eq=brightness=-0.14:saturation=1.15[bg];"
             f"[b]scale={W}:{fg_h}:force_original_aspect_ratio=increase,crop={W}:{fg_h}[fg];"
-            f"[bg][fg]overlay=0:(H-h)/2,setsar=1[v0];")
+            f"[bg][fg]overlay=0:(H-h)/2,setsar=1{output}{camera}")
 
 
 def _hook_y(layout, hook_y, facecam=None):
-    """Where the heading goes. In the gameplay layout the webcam sits in the top corner, so a heading
-    across the top would run under it: it goes just below the picture instead."""
-    if layout == "gameplay" and facecam and len(facecam) == 4 and facecam[2] > 8:
-        return PIP_MARGIN + int(round(PIP_W * facecam[3] / facecam[2])) + 32
-    return hook_y
+    """Keep the heading below the full-width camera."""
+    camera_h = _camera_height(layout, facecam)
+    return max(hook_y, camera_h + 150) if camera_h else hook_y
 
 
 _qsv_ok = None

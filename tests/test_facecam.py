@@ -5,6 +5,8 @@ border that stays in the same place in every frame.
 
 Runs against the code directly, with its own empty data folder."""
 import os, shutil, subprocess, sys, tempfile
+from unittest.mock import patch
+import numpy as np
 os.environ["PEAKCUT_DATA"] = tempfile.mkdtemp(prefix="pc-facecam-")
 sys.path.insert(0, ".")
 from studio import facecam, render
@@ -74,6 +76,14 @@ try:
     check("a square webcam along an edge is found", (box or {}).get("corner"), "right")
     check("it starts where the picture starts", abs((box or {}).get("x", 0) - 920) <= 3, True)
     check("it is as tall as the picture", abs((box or {}).get("h", 0) - 355) <= 6, True)
+    _, horizontal_borders = facecam._profiles(facecam._frames(sq))
+    motion = np.full((facecam.H, facecam.W), 35.0)
+    motion[41:130, 230:] = 3.0
+    with patch.object(facecam, "_profiles", return_value=(np.zeros(facecam.W), horizontal_borders)), \
+            patch.object(facecam, "_stillness", return_value=motion):
+        box = facecam.detect(sq)
+    check("motion finds the webcam when a vertical border blends into the game",
+          box is not None and box["conf"] == "high" and abs(box["x"] - 920) <= 3, True)
 
     # ---- one frame goes to the AI, and its answer is measured again before it is used
     def say(looked, box=None):
@@ -91,7 +101,6 @@ try:
     check("a model that cannot look at pictures changes nothing", abs((box or {}).get("x", 0) - 920) <= 3, True)
 
     # ---- what the model's one line is turned into
-    from unittest.mock import patch
     from studio import brain, ai as _ai
     with patch.object(_ai, "see", return_value=("CAME x=71% y=20% w=29% h=38%", 0, 0)):
         got = brain.look_for_facecam(b"jpeg")
@@ -102,20 +111,46 @@ try:
     with patch.object(_ai, "see", return_value=("I am a text model.", 0, 0)):
         check("an answer that is neither is not believed", brain.look_for_facecam(b"jpeg")["looked"], False)
 
-    # ---- the layout: the game fills the screen and the webcam sits in the corner
+    # ---- the layout: the camera spans the top, with gameplay beneath it
     f = render._filter("gameplay", 1920, [0, 0, 300, 170])
-    check("the game fills the screen", "scale=1080:1920" in f and "crop=1080:1920" in f, True)
+    check("the game fills the region under the camera", "crop=1080:1308" in f, True)
     check("the webcam is cropped out of the source", "crop=300:170:0:0" in f, True)
-    check("the webcam is put in the corner", "overlay=" in f, True)
+    check("the webcam spans the top of the video", "crop=1080:612" in f and "[cam][main]vstack" in f, True)
     check("without a webcam the game simply fills the screen",
           "scale=1080:1920" in render._filter("gameplay", 1920, None) and "overlay=" not in render._filter("gameplay", 1920, None), True)
     check("the layout is offered to the user", "gameplay" in render.LAYOUTS, True)
     # the heading must not run under the webcam picture
-    pip_h = 380 * 376 / 363
-    check("the heading goes below the webcam picture", render._hook_y("gameplay", 300, [0, 0, 363, 376]) > 26 + pip_h, True)
+    check("a tall webcam leaves room for the game", render._camera_height("gameplay", [0, 0, 363, 376]), 768)
+    check("the heading goes below the webcam picture", render._hook_y("gameplay", 300, [0, 0, 363, 376]) > 768, True)
     check("another picture moves the heading with it",
           render._hook_y("gameplay", 300, [0, 0, 300, 170]) < render._hook_y("gameplay", 300, [0, 0, 363, 376]), True)
     check("without a webcam the heading stays at the top", render._hook_y("crop", 300, None), 300)
+    layout, height, _, _ = render.geometry(1280, 720, "zoom_facecam")
+    graph = render._filter(layout, height, [0, 0, 300, 170])
+    check("zoom with a webcam keeps the zoomed crop and blurred background",
+          "crop=1080:1000" in graph and "boxblur=" in graph, True)
+    check("zoom puts the cropped webcam across the top",
+          "crop=300:170:0:0" in graph and "[cam][main]vstack" in graph, True)
+    check("without a webcam the zoomed layout still renders",
+          render._filter(layout, height), render._filter("zoom", height))
+    layout, height, _, _ = render.geometry(1280, 720, "full_facecam")
+    _, blur_height, _, _ = render.geometry(1280, 720, "blur")
+    check("full frame with a webcam keeps the same foreground size as blurred fill", height, blur_height)
+    graph = render._filter(layout, height, [0, 0, 300, 170])
+    check("full frame places the webcam above the gameplay and blurred fill",
+          "boxblur=" in graph and "crop=300:170:0:0" in graph and "[cam][main]vstack" in graph, True)
+    check("without a webcam full frame uses blurred fill", render._filter(layout, height), render._filter("blur", height))
+    from studio import creators
+    crop = creators._clean({"facecam_crop": ["0", "42.5", "20", "22.5"]})["facecam_crop"]
+    check("a manual camera crop scales with the source", render.facecam_pixels(crop, 1280, 720), [0, 306, 256, 162])
+    check("an empty camera crop restores automatic detection", creators._clean({"facecam_crop": []})["facecam_crop"], [])
+    try:
+        creators._clean({"facecam_crop": [90, 0, 20, 20]})
+    except ValueError:
+        invalid_rejected = True
+    else:
+        invalid_rejected = False
+    check("a camera crop cannot extend outside the frame", invalid_rejected)
 finally:
     shutil.rmtree(work, ignore_errors=True)      # the pictures are big; they must not be left behind
 

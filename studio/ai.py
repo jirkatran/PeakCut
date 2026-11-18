@@ -15,6 +15,9 @@ import base64
 import json
 import os
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 
 import httpx
@@ -30,10 +33,15 @@ PROVIDERS = {
     "openrouter": ("OpenRouter", "https://openrouter.ai/api/v1", "openai", "https://openrouter.ai/keys", "google/gemini-2.5-flash"),
     "anthropic": ("Claude", "https://api.anthropic.com/v1", "anthropic", "https://console.anthropic.com", ""),
     "ollama": ("Ollama (on this machine)", "http://127.0.0.1:11434/v1", "openai", "https://ollama.com", "llama3.1"),
+    "codex": ("Codex (on this machine)", "", "codex", "", "default"),
     "custom": ("Custom (OpenAI-compatible)", "", "openai", "", ""),
 }
 ALIASES = {"google": "gemini", "grok": "xai", "claude": "anthropic", "local": "ollama"}
-NO_KEY = {"ollama", "custom"}       # a model running on your own machine needs no key
+NO_KEY = {"ollama", "custom", "codex"}
+
+
+def _codex_allowed():
+    return not config.ACCOUNTS and config.HOST in {"127.0.0.1", "localhost", "::1"}
 
 # ---------------------------------------------------------------- the settings in use
 _lock = threading.Lock()
@@ -93,6 +101,8 @@ def base_url() -> str:
 
 def ready() -> bool:
     c = current()
+    if c["provider"] == "codex":
+        return bool(_codex_allowed() and c["models"] and shutil.which("codex"))
     return bool(c["provider"] in PROVIDERS and c["models"] and base_url() and (c["key"] or c["provider"] in NO_KEY))
 
 
@@ -104,7 +114,7 @@ def public() -> dict:
             "key_hint": c["key"][-4:] if len(c["key"]) >= 12 else "", "ready": ready(), "label": label(),
             "saved_here": bool(_from_dashboard().get("provider")),
             "providers": [{"id": k, "label": v[0], "address": v[1], "needs_key": k not in NO_KEY, "key_url": v[3], "example": v[4]}
-                          for k, v in PROVIDERS.items()]}
+                          for k, v in PROVIDERS.items() if k != "codex" or _codex_allowed()]}
 
 
 def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
@@ -113,6 +123,11 @@ def save(provider_id: str, model_ids, address: str = "", new_key=None) -> dict:
     p = ALIASES.get(str(provider_id or "").strip().lower(), str(provider_id or "").strip().lower())
     if p not in PROVIDERS:
         raise ValueError("Choose one of the AI services in the list.")
+    if p == "codex":
+        if not _codex_allowed():
+            raise ValueError("Codex needs PeakCut to run locally with accounts turned off.")
+        address, new_key = "", ""
+        model_ids = model_ids or "default"
     if isinstance(model_ids, str):
         model_ids = model_ids.split(",")
     ms = [str(m).strip()[:120] for m in (model_ids or []) if str(m).strip()][:5]
@@ -148,6 +163,10 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
     p = ALIASES.get(str(provider_id or c["provider"]).lower(), str(provider_id or c["provider"]).lower())
     if p not in PROVIDERS:
         raise ValueError("Choose one of the AI services in the list.")
+    if p == "codex":
+        if not _codex_allowed():
+            raise ValueError("Codex needs PeakCut to run locally with accounts turned off.")
+        return ["default"]
     k = str(with_key or "").strip() or (c["key"] if c["provider"] == p else "")
     base = str(address or "").strip().rstrip("/") or (c["base_url"] if c["provider"] == p else "") or PROVIDERS[p][1]
     if not base:
@@ -173,9 +192,13 @@ def list_models(provider_id=None, address=None, with_key=None) -> list:
 def test() -> dict:
     """One tiny request with the settings in use, to prove the key, the address and the model all work."""
     ms = models()
+    if provider() == "codex" and not shutil.which("codex"):
+        raise ValueError("Install and sign in to Codex on the computer running PeakCut.")
     if not ready():
         raise ValueError("Save a service, a model and a key first.")
     out, sent, wrote = call(ms[0], 'Answer with a JSON array that holds the single string "ok".', {"type": "ARRAY", "items": {"type": "STRING"}})
+    if provider() == "codex" and out != ["ok"]:
+        raise AIError('The AI did not return the expected test answer: ["ok"].')
     return {"ok": True, "model": ms[0], "tokens": sent + wrote, "answer": str(out)[:80]}
 
 
@@ -298,7 +321,46 @@ def call(model: str, prompt: str, schema: dict, timeout: float | None = None):
     `timeout` is how long one answer may take. A live stream passes a short one, because a slow
     answer must not stop the recording."""
     how = PROVIDERS[provider()][2]
-    return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic}[how](model, prompt, schema, timeout)
+    return {"gemini": _gemini, "openai": _openai, "anthropic": _anthropic, "codex": _codex}[how](model, prompt, schema, timeout)
+
+
+def _codex(model, prompt, schema, timeout=None):
+    if not _codex_allowed():
+        raise AIError("Codex needs PeakCut to run locally with accounts turned off.")
+    executable = shutil.which("codex")
+    if not executable:
+        raise AIError("Install and sign in to Codex on the computer running PeakCut.")
+    command = [executable, "-a", "never", "exec", "--ignore-user-config", "--ignore-rules",
+               "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
+               "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "apps",
+               "--enable", "skip_host_skill_discovery", "-c", 'web_search="disabled"', "--json"]
+    if model != "default":
+        command.extend(["--model", model])
+    try:
+        with tempfile.TemporaryDirectory(prefix="peakcut-codex-") as folder:
+            result = subprocess.run(
+                [*command, "-"], cwd=folder, input=_wrapped(prompt, schema),
+                capture_output=True, encoding="utf-8", errors="replace", timeout=timeout or 180,
+            )
+    except subprocess.TimeoutExpired:
+        raise AIError("Codex took too long to answer.") from None
+    except OSError:
+        raise AIError("PeakCut couldn't start Codex on this computer.") from None
+    answer, usage = "", None
+    for line in result.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event.get("type") == "item.completed":
+            item = event.get("item", {})
+            if item.get("type") == "agent_message":
+                answer = item.get("text", "")
+        if event.get("type") == "turn.completed":
+            usage = event.get("usage", {})
+    if result.returncode or usage is None:
+        raise AIError("Codex couldn't answer. Check that Codex is signed in and has usage available.")
+    return _parse(answer), int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0)
 
 
 def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, int, int]:
@@ -312,6 +374,8 @@ def see(prompt: str, image: bytes, timeout: float | None = None) -> tuple[str, i
     model = models()[0]
     b64 = base64.b64encode(image).decode()
     how = PROVIDERS[provider()][2]
+    if how == "codex":
+        return "", 0, 0
     if how == "gemini":
         body = {"contents": [{"role": "user", "parts": [
             {"text": prompt},

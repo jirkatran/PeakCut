@@ -133,6 +133,8 @@ main{background:var(--bg);margin:8px 8px 8px 0;border-radius:var(--r-lg);height:
 .sstats span{font-size:11px;color:#B9A597}
 .sinfo .cta{margin-top:auto;display:flex;flex-direction:column;gap:8px}
 .sinfo .cta .btn{height:46px;width:100%;justify-content:center;font-size:15px}
+.sinfo .cta .camera-settings{background:transparent;color:#fff;border:1px solid #795D4D}
+.sinfo .cta .camera-settings:hover{background:#4A3428}
 .sinfo .cta small{font-size:12px;color:#B9A597;text-align:center}
 .splat{display:flex;gap:4px;margin-left:auto}
 .splat button{display:grid;place-items:center;width:30px;height:30px;border:0;border-radius:8px;background:rgba(255,255,255,.06);color:#B9A597;cursor:pointer;transition:background-color .15s ease}
@@ -389,8 +391,10 @@ img.av{object-fit:cover}
 .lay-prev .ph{position:relative;width:28px;height:48px;border-radius:4px;overflow:hidden;background:#4A3428}
 .lay-prev .ph::before{content:"";position:absolute;inset:0;background:linear-gradient(160deg,#B4643A,#5E3A2A);filter:blur(3px);opacity:.75}
 .lay-prev .ph i{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:16px;background:linear-gradient(135deg,#FF8B33,#FFB27A)}
-.lay-prev.zoom .ph i{left:-6px;right:-6px;height:24px}
-.lay-prev.crop .ph i{left:0;right:0;top:0;height:100%;transform:none}
+.lay-prev:is(.zoom,.zoom_facecam) .ph i{left:-6px;right:-6px;height:24px}
+.lay-prev:is(.crop,.gameplay) .ph i{left:0;right:0;top:0;height:100%;transform:none}
+.lay-prev:is(.gameplay,.zoom_facecam,.full_facecam) .ph::after{content:"";position:absolute;inset:0 0 auto;height:13px;background:#FFE0C9}
+.lay-prev:is(.zoom_facecam,.full_facecam) .ph i{top:63%}
 .seg{display:flex;gap:4px;background:#fff;border-radius:10px;padding:4px}
 .composer.compact .seg{background:var(--muted)}
 .seg button{flex:1;display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 6px;border:0;border-radius:7px;background:transparent;color:var(--dim);font-size:13px;font-weight:600;cursor:pointer;transition:background-color .15s ease,color .15s ease}
@@ -598,6 +602,17 @@ dialog::backdrop{background:rgba(14,12,11,.42);animation:fadein .16s ease}
 .dlg{padding:24px;width:450px;max-width:100%;display:flex;flex-direction:column;gap:14px}
 .dlg h2{font-size:18px;font-weight:600;color:var(--brand-ink)}
 .dlg-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.camera-dlg{width:800px}
+.camera-dlg .dlg-foot{flex-wrap:wrap}
+.camera-stage{position:relative;width:fit-content;max-width:100%;align-self:center;touch-action:none;user-select:none;cursor:crosshair;background:#1E1612}
+.camera-stage img{display:block;max-width:100%;max-height:54dvh;pointer-events:none}
+.camera-box{position:absolute;border:2px solid #FF8B33;background:rgba(255,139,51,.12);cursor:move}
+.camera-box i{position:absolute;width:22px;height:22px;background:#FF8B33;border:2px solid #1E1612;border-radius:4px}
+.camera-box [data-corner="nw"]{top:0;left:0;transform:translate(-40%,-40%);cursor:nwse-resize}
+.camera-box [data-corner="ne"]{top:0;right:0;transform:translate(40%,-40%);cursor:nesw-resize}
+.camera-box [data-corner="sw"]{bottom:0;left:0;transform:translate(-40%,40%);cursor:nesw-resize}
+.camera-box [data-corner="se"]{bottom:0;right:0;transform:translate(40%,40%);cursor:nwse-resize}
+.camera-dlg details .fields{margin-top:10px}
 .editor{display:grid;grid-template-columns:minmax(240px,340px) minmax(300px,450px);max-height:calc(100vh - 48px)}
 .editor .stage{background:#17110E;display:grid;place-items:center;position:relative;min-height:320px}
 .editor video,.editor .stage img{width:100%;max-height:calc(100vh - 48px);aspect-ratio:9/16;object-fit:contain;display:block}
@@ -1065,10 +1080,10 @@ function aiCard() {
   const k = S.status.ai; if (!k) return "";
   return `<div class="card ai-home"><h2>AI</h2>
     <div class="ai-big">${k.ready ? esc(k.provider || "Ready") : "Not set up"}</div>
-    <p class="ai-sub">${k.ready ? esc(k.model || "") : "Clips are picked by loudness until an AI key is added."}</p>
+    <p class="ai-sub">${k.ready ? esc(k.model || "") : "Clips are picked by loudness until AI is set up."}</p>
     <div class="ai-stats"><div><b>${(k.today_calls || 0).toLocaleString()}</b><span>AI calls today</span></div>
       <div><b>${fmtK(k.today_tokens)}</b><span>Tokens today</span></div></div>
-    <div class="row">${!k.ready && S.status.user?.is_admin ? `<button class="btn primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Add AI key</button>` : ""}<button class="btn" data-act="go" data-v="usage">View usage ${ic("arrowr")}</button></div></div>`;
+    <div class="row">${!k.ready && S.status.user?.is_admin ? `<button class="btn primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Set up AI</button>` : ""}<button class="btn" data-act="go" data-v="usage">View usage ${ic("arrowr")}</button></div></div>`;
 }
 const PLAT = {
   youtube: {name: "YouTube", bg: "#FF0000", fg: "#fff", hint: "https://www.youtube.com/@name",
@@ -1113,8 +1128,97 @@ function drawStream() {
     <h3>${esc(p.title || "Live now")}</h3><p class="by">${esc(p.name || c.name)}</p>
     ${stats.length ? `<div class="sstats">${stats.map(([v, l]) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join("")}</div>` : ""}
     <div class="cta">${rec
-      ? `<button class="btn danger" data-act="stoplive" data-j="${esc(rec)}">${ic("stop")}Stop recording</button><small>Recording now. Clips appear below as they're made.</small>`
+      ? `${S.status.live_camera_picker ? `<button class="btn camera-settings" data-act="cameracrop" data-j="${esc(rec)}">Set camera crop</button>` : ""}<button class="btn danger" data-act="stoplive" data-j="${esc(rec)}">${ic("stop")}Stop recording</button><small>Recording now. Clips appear below as they're made.</small>`
       : `<button class="btn primary" data-act="golive" data-url="${esc(p.channel)}"><span class="rdot"></span>Record this stream</button><small>PeakCut watches it and clips the best moments as they happen.</small>`}</div>`);
+}
+function openCameraCrop(c, recording) {
+  const dlg = $("#formdlg");
+  dlg.innerHTML = `<form method="dialog" class="dlg camera-dlg" aria-labelledby="camera-title">
+    <h2 id="camera-title">Live camera crop</h2>
+    <p class="help">Draw a box around the camera. Drag the box to move it or drag a corner to resize it. The crop is used for layouts with a facecam.</p>
+    <p class="help" role="status" data-frame-status>Loading a frame from the recording…</p>
+    <div class="camera-stage" hidden><img alt="Frame from the original stream" draggable="false"><div class="camera-box" aria-hidden="true" hidden>
+      <i data-corner="nw"></i><i data-corner="ne"></i><i data-corner="sw"></i><i data-corner="se"></i>
+    </div></div>
+    <details><summary>Enter percentages</summary><div class="fields">${["Left", "Top", "Width", "Height"].map((label, i) => `<label class="f">${label} (%)<input type="number" step="0.01" min="${i < 2 ? 0 : 2}" max="100"></label>`).join("")}</div></details>
+    <div class="dlg-foot"><button class="btn" type="button" data-frame-refresh>Refresh frame</button><button class="btn" type="button" data-camera-auto>Use automatic</button><button class="btn" value="cancel">Cancel</button><button class="btn primary" type="button" data-camera-save>Save crop</button></div>
+  </form>`;
+  const stage = dlg.querySelector(".camera-stage"), img = stage.querySelector("img"), box = stage.querySelector(".camera-box");
+  const status = dlg.querySelector("[data-frame-status]"), inputs = Array.from(dlg.querySelectorAll("input"));
+  const save = dlg.querySelector("[data-camera-save]"), auto = dlg.querySelector("[data-camera-auto]");
+  dlg.setAttribute("aria-labelledby", "camera-title");
+  dlg.addEventListener("close", () => dlg.removeAttribute("aria-labelledby"), {once:true});
+  let crop = c.facecam_crop?.length === 4 ? [...c.facecam_crop] : [], drag = null;
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  const valid = a => a.length === 4 && a.every(Number.isFinite) && a[0] >= 0 && a[1] >= 0 &&
+    a[2] >= 2 && a[3] >= 2 && a[0] + a[2] <= 100.000001 && a[1] + a[3] <= 100.000001;
+  function draw(fields = true) {
+    box.hidden = !crop.length;
+    [box.style.left, box.style.top, box.style.width, box.style.height] = crop.length ? crop.map(n => n + "%") : ["", "", "", ""];
+    if (fields) inputs.forEach((input, i) => { input.value = crop.length ? Number(crop[i].toFixed(2)) : ""; });
+    save.disabled = !valid(crop);
+  }
+  const point = e => {
+    const r = stage.getBoundingClientRect();
+    return [clamp(100 * (e.clientX - r.left) / r.width, 0, 100), clamp(100 * (e.clientY - r.top) / r.height, 0, 100)];
+  };
+  stage.onpointerdown = e => {
+    if (e.button !== 0 || drag) return;
+    e.preventDefault();
+    const corner = e.target.dataset.corner, origin = point(e), mode = corner || (e.target === box ? "move" : "draw");
+    drag = {id:e.pointerId, mode, origin, before:[...crop]};
+    stage.setPointerCapture(e.pointerId);
+    if (mode === "draw") { crop = [...origin, 0, 0]; draw(); }
+  };
+  stage.onpointermove = e => {
+    if (drag?.id !== e.pointerId) return;
+    const [x, y] = point(e), [sx, sy] = drag.origin, [left, top, w, h] = drag.before;
+    const mode = drag.mode;
+    if (mode === "draw") crop = [Math.min(x, sx), Math.min(y, sy), Math.abs(x - sx), Math.abs(y - sy)];
+    else if (mode === "move") crop = [clamp(left + x - sx, 0, 100 - w), clamp(top + y - sy, 0, 100 - h), w, h];
+    else {
+      const right = left + w, bottom = top + h;
+      const nextLeft = mode.endsWith("w") ? clamp(left + x - sx, 0, right - 2) : left;
+      const nextRight = mode.endsWith("e") ? clamp(right + x - sx, left + 2, 100) : right;
+      const nextTop = mode.startsWith("n") ? clamp(top + y - sy, 0, bottom - 2) : top;
+      const nextBottom = mode.startsWith("s") ? clamp(bottom + y - sy, top + 2, 100) : bottom;
+      crop = [nextLeft, nextTop, nextRight - nextLeft, nextBottom - nextTop];
+    }
+    draw();
+  };
+  const finish = e => {
+    if (drag?.id !== e.pointerId) return;
+    if (e.type === "pointercancel" || !valid(crop)) crop = drag.before;
+    drag = null; draw();
+  };
+  stage.onpointerup = stage.onpointercancel = stage.onlostpointercapture = finish;
+  inputs.forEach(input => { input.oninput = () => {
+    const values = inputs.map(i => i.valueAsNumber);
+    crop = valid(values) ? values : []; draw(false);
+  }; });
+  const refresh = dlg.querySelector("[data-frame-refresh]");
+  refresh.onclick = () => {
+    refresh.disabled = true; status.hidden = false; status.textContent = "Loading a frame from the recording…";
+    img.src = `/api/live/${encodeURIComponent(recording)}/camera-frame?t=${Date.now()}`;
+  };
+  img.onload = () => { stage.hidden = false; status.hidden = true; refresh.disabled = false; };
+  img.onerror = () => { stage.hidden = true; status.textContent = "No preview frame is available yet. Try Refresh frame in a few seconds."; refresh.disabled = false; };
+  async function commit(value) {
+    save.disabled = auto.disabled = true;
+    try {
+      await send(`/api/creators/${encodeURIComponent(c.id)}`, {facecam_crop:value}, "PUT");
+      if (dlg.contains(save)) dlg.close();
+      toast(value.length ? "Camera crop saved" : "Automatic camera detection enabled", "ok");
+      await tick();
+    } catch (e) { auto.disabled = false; draw(false); toast(e.message, "bad"); }
+  }
+  save.onclick = () => {
+    if (!valid(crop)) return;
+    const [x, y, w, h] = crop.map(n => Number(n.toFixed(2)));
+    return commit([x, y, Math.min(w, 100 - x), Math.min(h, 100 - y)]);
+  };
+  auto.onclick = () => commit([]);
+  dlg.showModal(); draw(); refresh.click();
 }
 function liveOn(c) { return Object.entries(c.profiles || {}).filter(([k, p]) => p.live && c.channels?.[k] === p.channel).sort(([, p]) => p.channel === c.channel ? -1 : 1); }
 function statusBadge(c) {
@@ -1298,7 +1402,7 @@ function drawShell() {  const nav = (v, icon, label, extra = "") => `<button cla
   const aiBar = !toolBar && S.status.ai?.problem && me?.is_admin && S.view !== "settings" ? `<div class="vb" role="status">${ic("warn")}<span><b>The AI isn't answering.</b> ${esc(S.status.ai.problem)} Until then, clips are picked by loudness.</span><button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">Open AI settings</button></div>` : "";
   const diskBar = !toolBar && S.status.disk_full && S.view !== "settings" ? `<div class="vb" role="alert">${ic("warn")}<span><b>The drive PeakCut saves to is almost full, so it can't take new videos.</b> Free up space on it, or move PeakCut's folder to a bigger drive.</span>${me?.is_admin ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="storage">Open Storage</button>` : ""}</div>` : "";
   put($("#vbanner"), toolBar ? toolBar : diskBar ? diskBar : aiBar ? aiBar : upBar ? upBar : me && me.verified === false ? `<div class="vb" role="status">${ic("warn")}<span>Confirm your email to start clipping. We sent a link to <b>${esc(me.email)}</b>.</span><button class="btn sm" data-act="resendverify">Send a new link</button></div>`
-    : kk && kk.ready === false && S.view !== "usage" ? `<div class="vb" role="status">${ic("bolt")}<span>${me?.is_admin ? "Add your AI key to let the AI pick clips and write titles. Until then, clips are picked by loudness." : "The AI isn't set up on this server yet, so clips are picked by loudness."}</span>${me?.is_admin && S.view !== "settings" ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Add AI key</button>` : ""}</div>` : "");
+    : kk && kk.ready === false && S.view !== "usage" ? `<div class="vb" role="status">${ic("bolt")}<span>${me?.is_admin ? "Set up AI to pick clips and write titles. Until then, clips are picked by loudness." : "The AI isn't set up on this server yet, so clips are picked by loudness."}</span>${me?.is_admin && S.view !== "settings" ? `<button class="btn sm primary" data-act="go" data-v="settings" data-tab="ai">${ic("plus")}Set up AI</button>` : ""}</div>` : "");
   put($("#tpic"), pic); $("#tpic").classList.toggle("live", !!(c && (c.live_job || liveOn(c).length)));
   put($("#utabs"), tabs); moveInd(); $(".topbar").classList.toggle("tabbed", !!tabs);
   put($("#title"), `<span>${esc(title)}</span>`); put($("#subtitle"), subHtml ?? esc(sub)); put($("#actions"), act);
@@ -1389,7 +1493,7 @@ function drawAdd(variant) {
     </div></div></form>`;
   drawAtt();
 }
-const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", gameplay:"Gameplay + facecam"};
+const LAYOUT_SHORT = {blur:"Blurred fill", zoom:"Zoomed in", crop:"Fill screen", gameplay:"Gameplay + facecam", zoom_facecam:"Zoomed in + facecam", full_facecam:"Full frame + facecam"};
 const CAP_LOOK = {bounce:{font:"'Archivo Black'", hl:"#FFFF00", up:true}, hype:{font:"Anton", hl:"#FF3C3C", up:true}, clean:{font:"Poppins", hl:"#6BD7FF", up:false, w:800}};
 function capPrev(k) {
   const s = CAP_LOOK[k] || {font:"inherit", hl:"#FF8B33", up:true};
@@ -1561,7 +1665,7 @@ function onLink(input) {
   linkTimer = setTimeout(() => { if (input.value.trim() === u) takeLink(A, u, input); }, 900);   // other link shapes: take it once typing stops
 }
 document.addEventListener("input", e => { if (e.target.id === "url") onLink(e.target);
-  if (e.target.closest?.("#cform") && e.target.dataset.k && !/checkbox|radio/.test(e.target.type)) dirty(true); });
+  if (e.target.closest?.("#cform") && (e.target.dataset.k || e.target.hasAttribute("data-camera-crop")) && !/checkbox|radio/.test(e.target.type)) dirty(true); });
 document.addEventListener("keydown", e => { if (e.target.id === "url" && e.key === "Enter" && e.target.value.trim() && looksLink(e.target.value.trim())) { e.preventDefault(); clearTimeout(linkTimer); takeLink(att(), e.target.value.trim(), e.target); } });
 document.addEventListener("click", e => {
   const r = e.target.closest("[data-rm]"), A = att(); if (!r || A.busy) return;
@@ -1860,6 +1964,11 @@ function drawCreatorForm() {
       <div class="fields"><label class="sw span"><input type="checkbox" data-k="captions" data-caption-toggle ${c.captions === false ? "" : "checked"}>Generate captions</label>
         <label class="f">Caption style<select data-k="style" data-caption-style ${c.captions === false ? "disabled" : ""}>${opts(S.status.styles, c.style)}</select></label>
         <label class="f">Layout<select data-k="layout">${opts(S.status.layouts, c.layout)}</select></label>
+        <fieldset class="span fields" style="min-width:0;border:0;padding:0;margin:0">
+          <legend>Live camera crop</legend>
+          <p class="help span" style="margin:0">For layouts with a camera, set its position and size as percentages of the original video. Leave all four empty for automatic detection.</p>
+          ${["Left", "Top", "Width", "Height"].map((label, i) => `<label class="f">${label} (%)<input data-camera-crop type="number" min="${i < 2 ? 0 : 2}" max="100" step="0.01" value="${esc(c.facecam_crop?.[i] ?? "")}"></label>`).join("")}
+        </fieldset>
         <label class="f">Game<input data-k="game" value="${esc(c.game || "")}" placeholder="Read from the title"><small class="sub" style="font-weight:400">Left empty, the game is read from the stream's title. Set it for a streamer whose title says nothing: GTA 6, Fortnite, Elden Ring.</small></label>
         <label class="f">Shortest clip (seconds)<input data-k="min_len" type="number" value="${c.min_len}"></label>
         <label class="f">Longest clip (seconds)<input data-k="max_len" type="number" value="${c.max_len}"></label>
@@ -1878,7 +1987,11 @@ function drawCreatorForm() {
       <button class="btn danger" data-act="delcreator">${ic("trash")}Delete creator</button></div>
     <div class="savebar" id="savebar"><span>${ic("warn")}You have unsaved changes</span><button class="btn ghost" data-act="cdiscard">Discard</button><button class="btn primary" data-act="csave">${ic("check")}Save changes</button></div>`;
 }
-const creatorForm = () => { const d = {}; $$("#cform [data-k]").forEach(i => { if (i.type === "radio") { if (i.checked) d[i.dataset.k] = i.value; } else d[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; }); d.accounts = $$("#cform [data-acc]:checked").map(i => i.value); return d; };
+const creatorForm = () => { const d = {}; $$("#cform [data-k]").forEach(i => { if (i.type === "radio") { if (i.checked) d[i.dataset.k] = i.value; } else d[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; }); d.accounts = $$("#cform [data-acc]:checked").map(i => i.value);
+  const crop = $$("#cform [data-camera-crop]").map(i => i.value);
+  d.facecam_crop = crop.some(Boolean) ? crop : [];
+  return d;
+};
 const dirty = on => $("#savebar")?.classList.toggle("on", on);
 async function saveCreator(quiet) {
   try { await send(`/api/creators/${creatorId()}`, creatorForm(), "PUT"); dirty(false); if (!quiet) toast("Saved", "ok"); await tick(); return true; }
@@ -2008,6 +2121,10 @@ const setTabs = () => [
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
   const pv = k.providers.find(x => x.id === sel.value) || k.providers[0], same = pv.id === k.provider;
+  const codex = pv.id === "codex";
+  $("#ai_keywrap").hidden = codex;
+  $("#ai_codexhint").hidden = !codex;
+  if (codex && !$("#ai_model").value) $("#ai_model").value = "default";
   $("#ai_key").placeholder = same && k.has_key ? `Saved${k.key_hint ? ", ends in " + k.key_hint : ""}. Paste a new key to replace it` : pv.needs_key ? "Paste your key" : "Not needed";
   $("#ai_keyhint").innerHTML = pv.key_url ? `${pv.needs_key ? "Get a key at" : "Set it up at"} <a href="${esc(pv.key_url)}" target="_blank" rel="noopener">${esc(pv.key_url.replace("https://", ""))}</a>. The key stays on this server and is never shown again.` : "The key stays on this server and is never shown again.";
   $("#ai_model").placeholder = pv.example ? "For example " + pv.example : "The model id, exactly as the service names it";
@@ -2024,11 +2141,12 @@ async function drawSettings() {
   try {
     if (tab === "ai") {
       const k = S.ai = await api("/api/ai");
-      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Use your own key from any of these services. You pay that service directly. Without a key, clips are picked by loudness.</p>
-          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose a service, paste your key and pick a model.</span>`}</div>
+      body.innerHTML = `<section class="set-sec"><h2>AI</h2><p class="help">PeakCut uses an AI model to pick the moments worth clipping and to write hooks, titles and captions. Without an AI service, clips are picked by loudness.</p>
+          <div class="ai-state">${k.ready ? `<span class="pill ok">${ic("check")}Ready</span><span class="sub">${esc(k.label)} · ${esc(k.models[0] || "")}</span>` : `<span class="pill warn">Not set up</span><span class="sub">Choose an AI service and a model.</span>`}</div>
           <div class="ai-form">
             <label class="f">AI service<select id="ai_provider">${k.providers.map(x => `<option value="${esc(x.id)}" ${x.id === k.provider ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></label>
-            <label class="f">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
+            <label class="f" id="ai_keywrap">Key<input id="ai_key" type="password" autocomplete="off" spellcheck="false"><span class="hint" id="ai_keyhint"></span></label>
+            <p class="help" id="ai_codexhint" hidden>PeakCut uses the Codex sign-in on this computer. Video transcripts are sent to Codex.</p>
             <label class="f" id="ai_basewrap">Address<input id="ai_base" value="${esc(k.base_url || "")}" spellcheck="false"><span class="hint">Where the service answers. Only needed for a custom service.</span></label>
             <label class="f">Model<span class="with"><input id="ai_model" list="ai_models" value="${esc(k.models.join(", "))}" spellcheck="false"><button class="btn" type="button" data-act="aimodels">Find models</button></span>
               <datalist id="ai_models"></datalist><span class="hint">A fast, inexpensive model is the right choice. Add a second one after a comma to fall back on.</span></label>
@@ -2401,6 +2519,7 @@ document.addEventListener("click", async e => {
       } catch (e) { b.disabled = false; b.innerHTML = was; throw e; }
       return tick();
     }
+    if (a === "cameracrop") { const c = creator(); if (c) openCameraCrop(c, d.j); return; }
     if (a === "stoplive") {
       if (!await ask("Stop recording?", "Clips already made are kept. The rest of the buffer is cleared.", "Stop recording", true)) return;
       const j = jobOf(d.j); if (j) { j.status = "done"; j.stage = "Stopped by you"; }

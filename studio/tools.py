@@ -13,18 +13,25 @@ from pathlib import Path
 NEEDED = ("ffmpeg", "ffprobe")
 HELP = ("PeakCut needs ffmpeg to work on video, and it isn't installed on this computer yet. "
         + ("Open a terminal and run:  winget install Gyan.FFmpeg" if sys.platform == "win32" else
-           "Run:  brew install ffmpeg" if sys.platform == "darwin" else "Run:  sudo apt install ffmpeg")
+           "Run:  brew install ffmpeg-full" if sys.platform == "darwin" else "Run:  sudo apt install ffmpeg")
         + "  Then close PeakCut and start it again.")
 _seen = {"at": 0.0, "missing": list(NEEDED)}
+
+
+def _preferred() -> list:
+    folders = []
+    if os.environ.get("PEAKCUT_FFMPEG_DIR"):
+        folders.append(Path(os.environ["PEAKCUT_FFMPEG_DIR"]))
+    if sys.platform == "darwin":
+        folders.extend(Path(prefix) / "opt" / "ffmpeg-full" / "bin" for prefix in ("/opt/homebrew", "/usr/local"))
+    return folders
 
 
 def _places() -> list:
     """Folders ffmpeg is usually installed into, for when it is not on the PATH of this running program."""
     root = Path(__file__).resolve().parent.parent
-    out = [root / "ffmpeg" / "bin", root / "bin", root]
+    out = _preferred() + [root / "ffmpeg" / "bin", root / "bin", root]
     env = os.environ.get
-    if env("PEAKCUT_FFMPEG_DIR"):                    # the folder that holds ffmpeg, if it lives somewhere unusual
-        out.insert(0, Path(env("PEAKCUT_FFMPEG_DIR")))
     if sys.platform == "win32":
         local = Path(env("LOCALAPPDATA") or "")
         if str(local) not in ("", "."):
@@ -48,6 +55,12 @@ def _places() -> list:
 def setup() -> list:
     """Make ffmpeg and ffprobe reachable for everything PeakCut runs. Returns the ones that could not be found."""
     exe = ".exe" if sys.platform == "win32" else ""
+    for folder in _preferred():
+        if all((folder / (name + exe)).is_file() for name in NEEDED):
+            path = os.environ.get("PATH", "").split(os.pathsep)
+            if path[0] != str(folder):
+                os.environ["PATH"] = os.pathsep.join([str(folder), *path])
+            break
     missing = []
     for name in NEEDED:
         if shutil.which(name):
@@ -76,6 +89,10 @@ def missing() -> list:
 def explain(e) -> str:
     """The plain-words version of "the program could not be found", or "" if the error is something else."""
     text = str(e)
+    if ("No option name near" in text or "No such filter" in text) and "fontsdir=f" in text and "ass=" in text:
+        install = "Run:  brew install ffmpeg-full.  " if sys.platform == "darwin" else ""
+        return ("PeakCut needs a version of ffmpeg with subtitle support (libass) to make this clip. "
+                + install + "Then close PeakCut and start it again.")
     not_found = isinstance(e, FileNotFoundError) or "WinError 2" in text or "No such file or directory: 'ff" in text
     return HELP if not_found and (missing() or "ffmpeg" in text or "ffprobe" in text or "WinError 2" in text) else ""
 

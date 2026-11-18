@@ -365,6 +365,9 @@ def request_render(jid, cid, changes: dict):
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
         new["layout"] = DEFAULTS["layout"]
+    if new["layout"] in render.BLURRED_FACECAM_LAYOUTS and not new.get("facecam"):
+        clip.pop("facecam", None)
+        new.pop("facecam", None)
     clip.update(new, status="queued")
     save(job)
     _q.put(("clip", jid, cid))
@@ -379,9 +382,14 @@ def render_one(job, clip, words):
             _piece_again(job, clip)
         off = clip.get("src_offset", 0.0)
         src = Path(clip["src"]) if clip.get("src") else Path(job["source_path"])
+        manual_crop = live_facecam_crop(job, clip)
+        if not manual_crop and clip.get("layout") in render.BLURRED_FACECAM_LAYOUTS and "facecam" not in clip:
+            clip["facecam"] = job.get("facecam") or _facecam(job, src)
         if not clip.get("src"):
             clip["end"] = min(clip["end"], job["duration"])
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
+        if manual_crop:
+            local["facecam"] = render.facecam_pixels(manual_crop, job["width"], job["height"])
         near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
         out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
@@ -400,6 +408,14 @@ def render_one(job, clip, words):
         clip.update(status="error", error=safe.friendly(e, 400))
         creators.log(job["creator"], f"Clip failed: {safe.friendly(e, 200)}")
     save(job)
+
+
+def live_facecam_crop(job, clip):
+    if job.get("kind") == "live" and clip.get("layout") in render.FACECAM_LAYOUTS:
+        creator = creators.get(job.get("creator"))
+        if creator:
+            return creator.get("facecam_crop")
+    return None
 
 
 def _caption_words(job, clip, words, off):
@@ -523,14 +539,14 @@ def _covers(words: list, start: float, end: float) -> bool:
     return len(inside) >= 25 * minutes and inside[-1]["s"] >= start + 0.85 * (end - start)
 
 
-def _facecam(job) -> list | None:
+def _facecam(job, path=None) -> list | None:
     """Where the webcam is in the source: once for the whole video, for every clip of it.
 
     Only a sure answer is used. A box that is a scoreboard drawn over the game would
     put a picture of a scoreboard in the corner of the clip. One frame is also shown to
     the AI, which tells a person from a game character better than any measurement can;
     what it says is measured again on the picture, so it cannot do any harm."""
-    path = job.get("source_path")
+    path = path or job.get("source_path")
     if not path or not Path(path).is_file():
         return None
     try:
@@ -757,11 +773,11 @@ def _run_job(job):
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
                      captions=o.get("captions", True), status="queued", version=0)
-            # Only the gameplay layout uses a webcam, so it is only looked for then, and only once: a
+            # Only layouts with a webcam look for it, and only once on the full video: a
             # stream with no webcam is not looked for again on every clip of it.
-            if o["layout"] == "gameplay" and face is False:
+            if o["layout"] in render.FACECAM_LAYOUTS and face is False:
                 face = _facecam(job)
-            if face:
+            if face or (o["layout"] in render.BLURRED_FACECAM_LAYOUTS and job.get("source_path")):
                 c["facecam"] = face
             job["clips"].append(c)
             futures.append((renders.submit(ctx.bind(make), c, list(words)), c))

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import alerts, auth, brain, config, creators, ctx, facecam, games, jobs, load, media, transcribe, usage
+from . import alerts, auth, brain, config, creators, ctx, facecam, games, jobs, load, media, render, transcribe, usage
 
 # ":username!user@host PRIVMSG #channel :the message"
 _NICK = re.compile(r"(?m)^:([A-Za-z0-9_]{2,25})!")
@@ -154,8 +154,7 @@ class Session:
         self.base = {}                # running averages the jumps are measured against, shown on the card
         self.spikes = 0
         self.game = ""                # which game this stream is, when it can be told
-        self.facecam_box = None       # where the webcam is, found once the first clip is made
-        self.facecam_checked = False  # the look is made once, even when it finds nothing
+        self.facecam_box = None       # reused once the webcam has been found
         self.ai_busy = 0.0            # when the AI check now running was started, 0 when none is
 
     def _ask_ai(self, window=None, why=None):
@@ -193,6 +192,17 @@ class Session:
             return None
         self.job["facecam"] = [box["x"], box["y"], box["w"], box["h"]]
         return self.job["facecam"]
+
+    def camera_frame(self):
+        """A frame from a recent, complete part of this recording."""
+        with self.lock:
+            recent = list(self.segments[-3:])
+        for path, _, _ in reversed(recent):
+            if path.is_file():
+                frame = facecam._frame_jpeg(path, width=960, at=0.2, timeout=5)
+                if frame:
+                    return frame
+        return b""
 
     # ---------------------------------------------------------------- the game this stream is
     def _game(self):
@@ -607,13 +617,11 @@ class Session:
             return
         finally:
             lst.unlink(missing_ok=True)
-        # Only the gameplay layout uses a webcam, and only once the clip's own file is written: the
-        # webcam is looked for in it, once per stream.
-        if clip.get("layout") == "gameplay":
-            if not self.facecam_checked:
+        # Try the next clip if the webcam could not be found in the previous one.
+        if clip.get("layout") in render.FACECAM_LAYOUTS and not jobs.live_facecam_crop(self.job, clip):
+            if not self.facecam_box:
                 self.facecam_box = self._find_facecam(src)
-                self.facecam_checked = True
-            if self.facecam_box:
+            if self.facecam_box or clip["layout"] in render.BLURRED_FACECAM_LAYOUTS:
                 clip["facecam"] = self.facecam_box
         dur = segs[-1][2] - segs[0][1]
         offset = self._align(src, segs[0][1] + self.clock_fix, dur)

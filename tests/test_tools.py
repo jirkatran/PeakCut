@@ -20,6 +20,8 @@ for name in tools.NEEDED:
     f = Path(hidden) / (name + exe); f.write_bytes(b"x"); f.chmod(0o755)
 os.environ["PATH"] = tempfile.mkdtemp(prefix="pc-empty-")            # a PATH with no ffmpeg on it
 real_places = tools._places
+real_preferred = tools._preferred
+tools._preferred = lambda: []
 tools._places = lambda: []
 check("with ffmpeg nowhere, both programs are reported missing", tools.setup(), ["ffmpeg", "ffprobe"])
 err = FileNotFoundError(2, "The system cannot find the file specified")
@@ -31,8 +33,13 @@ check("installed but not on the PATH yet: found in its folder and used from ther
 os.environ["PATH"] = real_path
 os.environ["PEAKCUT_FFMPEG_DIR"] = hidden
 tools._places = real_places
+tools._preferred = real_preferred
 check("PEAKCUT_FFMPEG_DIR is looked in first", tools._places()[0], Path(hidden))
 tools.setup()
+check("the configured ffmpeg takes priority over the one on PATH", Path(shutil.which("ffmpeg")).parent, Path(hidden))
+check("a build without the subtitle filter gives a plain explanation",
+      safe.friendly(RuntimeError("No option name near 'clip001.ass:fontsdir=f' while parsing ass=clip001.ass:fontsdir=f")),
+      lambda message: "libass" in message)
 
 # ---- the speech model
 d = config.ASR_MODEL_DIR
